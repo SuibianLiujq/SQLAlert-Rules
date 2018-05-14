@@ -1,0 +1,142 @@
+#################
+# 本文件定义规则，用于wannacry 病毒的检测。
+#
+# 规则分为三步：
+# 	1.存在目标端口为 portlist 的TCP连接：
+# 		输出 INFO 报警信息；
+# 	2.满足第一步条件的 sip ，针对 portlist 扫描其他IP：
+# 		输出 WARNING 报警信息；
+# 	3.满足第二步条件的 sip ,有 domainlist 解析请求：
+# 		输出 CRITICAL 报警信息。
+#################
+
+import "alert/wannacry/cfg/wannacry.rule";
+
+
+######
+# 第一步：
+# 	检查是否有对敏感端口的连接。
+######
+def __query_port(listRes,args){
+	sql_tcp_port = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'tcp-*'
+		WHERE
+			last(%(__range_query_port__))
+			AND (dport IN $(portlist))
+			AND NOT (dip IN $(whitelist))
+		GROUP BY
+			sip,
+			dport
+		limit 1000,100
+	";
+	result = query(sql_tcp_port);
+
+	return __alert(result,"INFO","尝试连接敏感端口");
+}
+
+######	
+# 第二步：
+#	检查是否针对敏感端口在扫描其他IP，
+#	根据count_dip>=__threshold__进行过滤输出。
+#####
+def __query_scan_port(listRes,args){
+	
+	# 如果结果为空, 则输出空记录。
+	if len(listRes) == 0 {
+                return listRes;
+        }
+	
+	# 获取sip列表，使用该列表进行过滤。
+	siplist = item_values(listRes,"sip");
+	sql_tcp_scan_port = "
+		SELECT
+			COUNT(UNIQUE dip)    AS count_dip
+		FROM
+			'tcp-*'
+		WHERE
+			last(%(__range_query_port__))
+			AND (dport IN $(portlist))
+			AND NOT (dip IN $(whitelist))
+		GROUP BY
+			sip,
+			dport
+		ORDER BY
+			count_dip DESC
+		limit 1000,100
+	";
+	# 查询 ES ,并根据count_dip>=__threshold__进行过滤输出。
+	result = query(sql_tcp_scan_port,"count_dip >= __threshold__");
+	
+	desc_subtype = "尝试扫描其他IP的敏感端口 目标IP数量>=" + fmt_int(__threshold__) + ".";
+	return __alert(result,"WARNING",desc_subtype);
+}
+
+######
+# 第三步：
+# 	检查过去一段时间 __range_query_domain__ ，
+# 	异常sip是否申请解析过开关域名。
+######
+def __query_domain(listRes,args){
+
+	# 如果结果为空, 则输出空记录。 
+	if len(listRes) == 0 {
+		return listRes;
+	} 
+	
+	# 获取 sip 列表，使用该列表进行过滤
+	siplist = item_values(listRes, "sip");
+	sql_dns_domain = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'dns-*'
+		WHERE
+			last(%(__range_query_domain__))
+			AND (sip IN $(siplist))
+			AND (domain IN $(domainlist))
+		GROUP BY
+			sip,
+			domain
+		ORDER BY
+			flow DESC
+	";
+	result = query(sql_dns_domain);
+
+	return __alert(result,"CRITICAL","尝试访问可疑域名.");
+}
+
+######
+# 报警输出：
+# 	输出到 ES 前插入时间戳 @timestamp 、报警等级 level 、告警描述 desc_subtype。
+######
+
+def __alert(list,level,desc_subtype){
+	__level__         = level;
+	__desc_subtype__    = desc_subtype;
+	item_set(list,"@timestamp",time("T"));
+	return alert(list);
+}
+
+# #######################################################################
+# 配置并调用函数链 (规则入口).
+#
+# 函数链配置包括:
+#       name: 函数名;
+#       args: 函数参数.
+#
+# 函数链中的函数原型为:
+#       def func(result, args);
+#
+# 参数说明;
+#       result: 上一个函数的返回值;
+#                       函数链中的第一个函数接收到的该参数为 null.
+#       args:   函数链配置时指定的参数.
+# #######################################################################
+call_list([
+	{ "name": "__query_port",      "args": {} },
+	{ "name": "__query_scan_port", "args": {} },
+	{ "name": "__query_domain",    "args": {} }
+]);

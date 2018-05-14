@@ -1,0 +1,42 @@
+########################################################
+#  portlist   为敏感端口列表
+#  whitelist  为可信任目标IP，若某连接的dip在whitelist内则不产生警告
+#  domainlist 为可疑域名列表
+#######################################################
+portlist = [
+	"139",
+	"445"
+];
+whitelist = [
+];
+domainlist = [
+	'www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com',
+	'www.ifferfsodp9ifjaposdfjhgosurijfaewrwergwea.com',
+	'www.ayylmaotjhsstasdfasdfasdfasdfasdfasdfasdf.com',
+	'www.iuqssfsodp9ifjaposdfjhgosurijfaewrwergwea.com',
+	'www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergweb.com'
+];
+
+###
+#__range_query_port__     查询 tcp 的时间范围
+#__range_query_domain__   查询 dns 的时间范围
+#__threshold__            判断为扫描行为的阈值
+###
+__range_query_port__    = "5m";
+__range_query_domain__    = "1d";
+__threshold__ = 50;
+
+
+######
+# 规则描述
+# __type__:         报警类型;
+# __subtype__:      报警子类型;
+#
+# __desc_type__:    报警类型描述;
+######
+__type__  = "RANSOMWARE";
+__subtype__ = "WANNACRY";
+
+__desc_type__    = "[RANSOMWARE] WannaaCry勒索病毒相关端口、域名监控";
+
+
