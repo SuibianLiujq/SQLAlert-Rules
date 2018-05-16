@@ -1,0 +1,191 @@
+# ########################################################################
+# 本文件定义的规则, 用于 URL POST 请求数检测.
+#
+# ########################################################################
+import "alert/http/flows/cfg/post_url.rule";
+
+# ########################################################################
+# 第 1 步:
+#	获取最近__range_time_unit__的 url 及其 flow。
+#
+# ########################################################################
+def __query_now(listRes, args) {
+	sql = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'httpurltest-*'
+		WHERE
+			last(%(__range_time_unit__)) 
+			AND query_string('method:POST')
+		GROUP BY
+			url
+		LIMIT 500
+	";
+	
+	result = query(sql);
+	return result;
+}
+
+# ########################################################################
+# 第 2 步:
+# 	根据第1步产生的 url list ，查询过去__range_check_last__的每个url每__range_time_unit__的flow
+#	计算当前时间段 flow 的偏离程度，当大于__threshold__时发出 INFO告警 。
+#
+# ########################################################################
+def __query_last(listRes,args) {
+
+	# 如果listRes为空，返回空结果。
+	if len(listRes) == 0 {
+		return listRes;
+	}
+	
+	# 生成 urllist 用作过滤。
+	urllist = item_values(listRes,"url");
+	sql = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'httpurltest-*'
+		WHERE
+			last(%(__range_check_last__)) 
+			AND query_string('method:POST')
+			AND url IN $(urllist)
+		GROUP BY
+			url,
+			date_histogram(%(__range_time_unit__)) AS date
+		LIMIT 500,300
+	";
+	result = query(sql);
+	result = agg_values(result,"url","flow");
+	
+	# 开始检查
+	# alert_url 为告警信息 [{"url":url,"flow":x0,"value":},...]
+	# ret_url   为传递下一级告警的信息 {url:x0,...}
+	alert_url = [];
+	ret_url = {};
+	for item in result {
+		xlist = item["flow"];
+		# xlist 按时间排正序 所以x0取最后一位。
+		x0 = xlist[len(xlist)-1];
+		# 该 url 过去一段时间没有数据记录，直接作为异常点记录
+		if len(xlist) == 1 {
+			alert_url = append(alert_url,{"url":item["url"],"flow":x0});
+			ret_url[item["url"]] = x0;
+			continue;
+		}
+		# 利用 x0 及去除 x0 后的 xlist 计算偏离程度
+		xlist = remove_last(xlist);
+		value = deviation_model(x0,xlist);
+		if value != -1 {
+			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":value});
+			ret_url[item["url"]] = x0;
+		}
+	}
+	 __alert(alert_url,"INFO");
+	return ret_url;
+}
+
+# ########################################################################
+# 第 3 步:
+#	根据第2步的 url 查询历史__range_check_hisdata__天的同一时间段的 flow，
+#	计算当前时间段的 flow 与历史偏离程度，若大于 __threshold__ 进行 WARNING 告警。
+# ########################################################################
+def __query_hisdata(res, args) {
+	
+	#若 res 为空，返回空结果。
+	if len(res) == 0 {
+		return res;
+	}
+
+	# 生成 url 列表, 并使用 url 列表作为 SQL 过滤条件.
+	urllist = keys(res);
+	sql = "
+		SELECT
+			SUM(flow) AS flow 
+		FROM
+			'httpurltest-*'
+		WHERE
+			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
+			AND query_string('method:POST')
+			AND url IN $(urllist)
+		GROUP BY
+			url,
+			date_histogram(1d) AS date
+	";
+	result = query(sql);
+	result = agg_values(result,"url","flow");
+	
+	# 开始检查
+	alert_url = [];
+	for item in result {
+		url = item["url"];
+		xlist = item["flow"];
+		x0 = res[url];
+		value = deviation_model(x0,xlist);
+		if value != -1 {
+			alert_url = append(alert_url,{"url":url,"flow":x0,"value":value});
+		}
+	}
+	return __alert(alert_url,"WARNING");
+}
+
+
+# 偏差程度检查模型
+# 当 0 < xlist < 3 时，MAD为0;MAD为0时返回 -1。
+def deviation_model(x0,xlist) {
+	median_xlist = median(xlist);
+	abs_deviation_list = [];
+	for(i=0;i<len(xlist);i++){
+		abs_deviation = xlist[i]<median_xlist ? median_xlist-xlist[i] : xlist[i]-median_xlist;
+		abs_deviation_list = append(abs_deviation_list,abs_deviation);
+	}
+	mad = median(abs_deviation_list);
+	abs_dev0 = x0<median_xlist ? median_xlist-x0 : x0-median_xlist;
+	if mad == 0 {
+		return -1;
+	}
+	temp = abs_dev0/mad;
+	if(temp > __threshold__) {
+		return temp;
+	}else{
+		return -1;
+	}
+}
+
+# ########################################################################
+# 报警输出.
+#
+# 在该函数内需指定:
+# __level__: 报警等级.
+# ########################################################################
+def __alert(list, level) {
+	
+	__level__ = level;
+	item_set(list,"@timestamp",time("T"));
+#	pprint(list);
+	alert(list);
+}
+
+
+# ########################################################################
+# 配置并调用函数链 (规则入口).
+#
+# 函数链配置包括:
+#	name: 函数名;
+#	args: 函数参数.
+#
+# 函数链中的函数原型为:
+#	def func(result, args);
+#
+# 参数说明;
+#	result: 上一个函数的返回值;
+#			函数链中的第一个函数接收到的该参数为 null.
+#	args:   函数链配置时指定的参数.
+# ########################################################################
+call_list([
+	{ "name": "__query_now",    "args": {} },
+	{ "name": "__query_last",   "args": {} },
+	{ "name": "__query_hisdata","args": {} }
+]);
+
