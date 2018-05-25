@@ -24,6 +24,7 @@ def __query_now(listRes, args) {
 	";
 	
 	result = query(sql);
+#	pprint(result);
 	return result;
 }
 
@@ -58,6 +59,7 @@ def __query_last(listRes,args) {
 	";
 	result = query(sql);
 	result = agg_values(result,"url","flow");
+#	pprint(result);
 	
 	# 开始检查
 	# alert_url 为告警信息 [{"url":url,"flow":x0,"value":},...]
@@ -68,10 +70,10 @@ def __query_last(listRes,args) {
 		xlist = item["flow"];
 		# xlist 按时间排正序 所以x0取最后一位。
 		x0 = xlist[len(xlist)-1];
-		# 该 url 过去一段时间没有数据记录，直接作为异常点记录
+		# 该 url 过去一段时间没有数据记录，直接作为异常点记录，设置 value 为 0 。 
 		if len(xlist) == 1 {
-			alert_url = append(alert_url,{"url":item["url"],"flow":x0});
-			ret_url[item["url"]] = x0;
+			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":0});
+#			ret_url[item["url"]] = x0;
 			continue;
 		}
 		# 利用 x0 及去除 x0 后的 xlist 计算偏离程度
@@ -82,7 +84,7 @@ def __query_last(listRes,args) {
 			ret_url[item["url"]] = x0;
 		}
 	}
-	 __alert(alert_url,"INFO");
+	__alert(alert_url,"INFO");
 	return ret_url;
 }
 
@@ -132,30 +134,36 @@ def __query_hisdata(res, args) {
 
 
 # 偏差程度检查模型
-# 当 median为0时没有检测意义，返回 -1。
 def deviation_model(x0,xlist) {
 	median_xlist = median(xlist);
+	# 当 median 为0时没有检测意义，返回 -1。
 	if median_xlist == 0 {
 		return -1;
 	}
+	# 求 xlist 与 median 的差的绝对值
 	abs_deviation_list = [];
 	for(i=0;i<len(xlist);i++){
 		abs_deviation = xlist[i]<median_xlist ? median_xlist-xlist[i] : xlist[i]-median_xlist;
 		abs_deviation_list = append(abs_deviation_list,abs_deviation);
 	}
+	# MAD 为绝对差的中值
 	mad = median(abs_deviation_list);
+	# 求 x0 与 median 的绝对差
 	abs_dev0 = x0<median_xlist ? median_xlist-x0 : x0-median_xlist;
+	# 数据量足够的时候 MAD 为 0 说明数据十分平稳几乎没有波动，一旦出现波动即为异常
 	if mad == 0 {
-		if abs_dev0 == 0 {
-			return -1;
+		if((abs_dev0 != 0) and (len(xlist)>=6)){
+			return abs_dev0;
 		}
+		# 数据量不足或者 abs_dev0 为 0 时，返回 -1。
 		else {
-			temp = abs_dev0/median_xlist;
+			return -1;
 		}
 	}
 	else{
 		temp = abs_dev0/mad;
 	}
+	
 	if(temp > __threshold__) {
 		return temp;
 	}else{
@@ -171,7 +179,7 @@ def deviation_model(x0,xlist) {
 # ########################################################################
 def __alert(list, level) {
 	
-	__level__ = level;
+	__level__   = level;
 	item_set(list,"@timestamp",time("T"));
 #	pprint(list);
 	alert(list);
