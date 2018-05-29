@@ -14,7 +14,7 @@ def __query_now(listRes, args) {
 		SELECT
 			SUM(flow) AS flow
 		FROM
-			'httpurltest-*'
+			'httpstat-*'
 		WHERE
 			last(%(__range_time_unit__)) 
 			AND query_string('method:POST')
@@ -47,7 +47,7 @@ def __query_last(listRes,args) {
 		SELECT
 			SUM(flow) AS flow
 		FROM
-			'httpurltest-*'
+			'httpstat-*'
 		WHERE
 			last(%(__range_check_last__)) 
 			AND query_string('method:POST')
@@ -72,7 +72,7 @@ def __query_last(listRes,args) {
 		x0 = xlist[len(xlist)-1];
 		# 该 url 过去一段时间没有数据记录，直接作为异常点记录，设置 value 为 0 。 
 		if len(xlist) == 1 {
-			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":0});
+#			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":0});
 #			ret_url[item["url"]] = x0;
 			continue;
 		}
@@ -106,7 +106,7 @@ def __query_hisdata(res, args) {
 		SELECT
 			SUM(flow) AS flow 
 		FROM
-			'httpurltest-*'
+			'httpstat-*'
 		WHERE
 			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
 			AND query_string('method:POST')
