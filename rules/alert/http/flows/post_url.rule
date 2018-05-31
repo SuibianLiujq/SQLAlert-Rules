@@ -69,17 +69,9 @@ def __query_last(listRes,args) {
 	for item in result {
 		xlist = item["flow"];
 		# xlist 按时间排正序 所以x0取最后一位。
-<<<<<<< HEAD
 		x0 = url_x0[item["url"]][0]["flow"];
 		# 该 url 过去一段时间没有数据记录，则跳过不分析。 
 		if len(xlist) <= 2 {
-=======
-		x0 = xlist[len(xlist)-1];
-		# 该 url 过去一段时间没有数据记录，直接作为异常点记录，设置 value 为 0 。 
-		if len(xlist) == 1 {
-#			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":0});
-#			ret_url[item["url"]] = x0;
->>>>>>> 74a2277357ad95cfad98c6a651efbba623d25fe1
 			continue;
 		}
 
