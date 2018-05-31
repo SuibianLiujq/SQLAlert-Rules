@@ -24,7 +24,6 @@ def __query_now(listRes, args) {
 	";
 	
 	result = query(sql);
-#	pprint(result);
 	return result;
 }
 
@@ -41,8 +40,10 @@ def __query_last(listRes,args) {
 		return listRes;
 	}
 	
-	# 生成 urllist 用作过滤。
+	# 生成 urllist 用作过滤，每个 url 对应的 flow 为 x0 。
 	urllist = item_values(listRes,"url");
+	url_x0 = agg_items(listRes,"url");
+
 	sql = "
 		SELECT
 			SUM(flow) AS flow
@@ -59,7 +60,6 @@ def __query_last(listRes,args) {
 	";
 	result = query(sql);
 	result = agg_values(result,"url","flow");
-#	pprint(result);
 	
 	# 开始检查
 	# alert_url 为告警信息 [{"url":url,"flow":x0,"value":},...]
@@ -69,15 +69,24 @@ def __query_last(listRes,args) {
 	for item in result {
 		xlist = item["flow"];
 		# xlist 按时间排正序 所以x0取最后一位。
+<<<<<<< HEAD
+		x0 = url_x0[item["url"]][0]["flow"];
+		# 该 url 过去一段时间没有数据记录，则跳过不分析。 
+		if len(xlist) <= 2 {
+=======
 		x0 = xlist[len(xlist)-1];
 		# 该 url 过去一段时间没有数据记录，直接作为异常点记录，设置 value 为 0 。 
 		if len(xlist) == 1 {
 #			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":0});
 #			ret_url[item["url"]] = x0;
+>>>>>>> 74a2277357ad95cfad98c6a651efbba623d25fe1
 			continue;
 		}
-		# 利用 x0 及去除 x0 后的 xlist 计算偏离程度
+
+		# 去掉 xlist 头尾，不足5m的聚合数据
 		xlist = remove_last(xlist);
+		xlist = remove_first(xlist);
+		# 利用 x0 及 xlist 计算偏离程度
 		value = deviation_model(x0,xlist);
 		if value != -1 {
 			alert_url = append(alert_url,{"url":item["url"],"flow":x0,"value":value});
@@ -150,10 +159,12 @@ def deviation_model(x0,xlist) {
 	mad = median(abs_deviation_list);
 	# 求 x0 与 median 的绝对差
 	abs_dev0 = x0<median_xlist ? median_xlist-x0 : x0-median_xlist;
-	# 数据量足够的时候 MAD 为 0 说明数据十分平稳几乎没有波动，一旦出现波动即为异常
+	# 数据量足够的时候 MAD 为 0 说明数据十分平稳几乎没有波动，一旦出现波动，使用z分数评估偏离状况
 	if mad == 0 {
 		if((abs_dev0 != 0) and (len(xlist)>=6)){
-			return abs_dev0;
+			mean_xlist = avg(xlist);
+			sd_xlist = stdev(xlist);
+			temp = (x0 - mean_xlist)/sd_xlist;
 		}
 		# 数据量不足或者 abs_dev0 为 0 时，返回 -1。
 		else {
