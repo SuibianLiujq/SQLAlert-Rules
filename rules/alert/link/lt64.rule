@@ -1,0 +1,157 @@
+# ###################################################
+#
+# This file defines the rule to detect packets of lt64
+#
+# ###################################################
+
+import "alert/link/cfg/lt64.rule";
+
+# ############################################
+# Step 1. Get the number of lt64 packets last __range_time_unit__ 
+#
+# ############################################
+
+def __query_now(res,args) {
+	result = query("
+		SELECT
+			SUM(lt64) AS lt64
+		FROM
+
+			'link-*'
+		WHERE
+			last(%(__range_time_unit__))
+		
+	");
+	return result;
+}
+
+# ###################################################
+# Step 2. Compare the number returned from step 1 to 
+# 	the data list of lt64 packets last __range_check_last__ per __range_time_unit__
+#
+# ###################################################
+
+def __query_last(res,args) {
+        result = query("
+                SELECT
+                        SUM(lt64) AS lt64
+                FROM
+                        'link-*'
+                WHERE 
+			last(%(__range_check_last__))
+                GROUP BY
+                        date_histogram(%(__range_time_unit__)) AS date
+                LIMIT 10000
+        ");
+	
+	xlist = item_values(result,"lt64");
+	x0 = res[0]["lt64"]; 
+	
+	# Remove the first and last elements of xlist,which are inaccurate.
+	if len(xlist<=2){return -1;}
+	xlist = remove_last(xlist);
+	xlist = remove_first(xlist);
+
+	value = deviation_model(x0,xlist);
+	if value != -1 {
+		__alert([{"lt64":x0,"value":value}],"INFO");
+#		print("x0   :%(x0)");
+#		print("value:%(value)");
+#		print(xlist);
+		return x0;
+	}
+	else {
+		return -1;
+	}
+}
+
+# ###############################################
+# Step 3.Compare the number returned from step 1 to 
+# 	the data list last __range_check_hisdata__ days.
+#
+# ###############################################
+def __query_hisdata(res,args) {
+	# If step 2 returns -1 that means the number returned from step 1 is usual.
+	if res == -1 {
+		return -1;
+	}
+	result = query("
+		SELECT
+			SUM(lt64) AS lt64
+		FROM
+			'link-*'
+		WHERE 
+			last_days(%(__range_check_hisdata__), %(__range_time_unit__))
+		GROUP BY
+			date_histogram(1d) AS date
+		LIMIT 10000
+	");
+	
+	x0 = res;
+	xlist = item_values(result,"lt64");
+	value = deviation_model(x0,xlist);
+	if value != -1 {
+		__alert([{"lt64":x0,"value":value}],"WARNING");
+#		print("x0   :%(x0)");
+#		print("value:%(value)");
+#		print(xlist);
+#		print("-------------------------------------------------------");
+		return 1;
+	}
+}
+
+
+
+def deviation_model(x0,xlist) {
+        median_xlist = median(xlist);
+	# 当 median 为0时没有检测意义，返回 -1。
+	if median_xlist == 0 {
+		return -1;
+	}
+
+	# 求 xlist 与 median 的差的绝对值
+        abs_deviation_list = [];
+        for(i=0;i<len(xlist);i++){
+                abs_deviation = xlist[i]<median_xlist ? median_xlist-xlist[i] : xlist[i]-median_xlist;
+                abs_deviation_list = append(abs_deviation_list,abs_deviation);
+        }
+	# MAD 为绝对差的中值
+        mad = median(abs_deviation_list);
+	# 求 x0 与 median 的绝对差
+        abs_dev0 = x0<median_xlist ? median_xlist-x0 : x0-median_xlist;
+        # 数据量足够的时候 MAD 为 0 说明数据十分平稳几乎没有波动，一旦出现波动，使用z分数评估偏离状况
+        if mad == 0 {
+		if((abs_dev0 != 0) and (len(xlist)>=6)){
+			mean_xlist = avg(xlist);
+			sd_xlist = stdev(xlist);
+			temp = (x0 - mean_xlist)/sd_xlist;
+		}
+		# 数据量不足或者 abs_dev0 为 0 时，返回 -1。
+		else {	
+			return -1;
+		}
+	}
+	else {
+		temp = abs_dev0/mad;
+	}
+	if(temp > __threshold__) {
+                return temp;
+        }else{
+                return -1;
+        }
+}
+
+def __alert(list, level) {
+	__level__   = level;
+	item_set(list,"@timestamp",time("T"));
+	alert(list);
+}
+
+call_list([
+	{ "name": "__query_now",    "args": {} },
+	{ "name": "__query_last",   "args": {} },
+	{ "name": "__query_hisdata","args": {} }
+]);
+
+
+
