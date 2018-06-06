@@ -9,13 +9,14 @@
 # __range_time_unit__:     查询时间单元;
 # __range_check_last__:    一级报警查询时间段；
 # __range_check_hisdata__: 查询过去天数；
-# __threshold__:           报警阈值.
+# __info_threshold__:      INFO 报警阈值.
+# __warning_threshold__:   WARNING 报警阈值
 # ########################################################################
 __range_time_unit__      = "5m";
 __range_check_last__     = "6h";
 __range_check_hisdata__  = 30;  
-__threshold__            = 12;
-
+__info_threshold__       = 13;
+__warning_threshold__    = 100;
 # ########################################################################
 # 规则描述
 #
@@ -28,6 +29,5 @@ __threshold__            = 12;
 __type__    = "LINK";
 __subtype__ = "LINK_LT64";
 __desc_type__    = "[LINK] LINK_LT64 包数监控";
-__desc_subtype__ = "Link lt64 包数偏离程度(每%(__range_time_unit__)) > " + fmt_int(__threshold__) + ".";
 
 

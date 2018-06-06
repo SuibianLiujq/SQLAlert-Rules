@@ -87,11 +87,17 @@ def __query_hisdata(res,args) {
 		LIMIT 10000
 	");
 	
-	x0 = res;
+#	x0 = res;
+	x0 = res[0]["lt64"];
 	xlist = item_values(result,"lt64");
 	value = deviation_model(x0,xlist);
 	if value != -1 {
-		__alert([{"lt64":x0,"value":value}],"WARNING");
+		if value >= __warning_threshold__ {
+			__alert([{"lt64":x0,"value":fmt_float(value,2)}],"WARNING",__warning_threshold__);
+		}
+		else {
+			__alert([{"lt64":x0,"value":fmt_float(value,2)}],"INFO",__info_threshold__);
+		}
 #		print("x0   :%(x0)");
 #		print("value:%(value)");
 #		print(xlist);
@@ -103,6 +109,14 @@ def __query_hisdata(res,args) {
 
 
 def deviation_model(x0,xlist) {
+	# 假设 x0 在 xlist 的 10% 到 90% 之间，则认为 x0 正常返回-1。 
+	nintyPercent_xlist = percentile(xlist,90);
+	tenPercent_xlist   = percentile(xlist,10);
+	if x0< nintyPercent_xlist {
+		if x0> tenPercent_xlist {
+			return -1;
+		}
+	}
         median_xlist = median(xlist);
 	# 当 median 为0时没有检测意义，返回 -1。
 	if median_xlist == 0 {
@@ -118,7 +132,7 @@ def deviation_model(x0,xlist) {
 	# MAD 为绝对差的中值
         mad = median(abs_deviation_list);
 	# 求 x0 与 median 的绝对差
-        abs_dev0 = x0<median_xlist ? median_xlist-x0 : x0-median_xlist;
+        abs_dev0 = x0<median_xlist ? tenPercent_xlist-x0 : x0-nintyPercent_xlist;
         # 数据量足够的时候 MAD 为 0 说明数据十分平稳几乎没有波动，一旦出现波动，使用z分数评估偏离状况
         if mad == 0 {
 		if((abs_dev0 != 0) and (len(xlist)>=6)){
@@ -134,22 +148,32 @@ def deviation_model(x0,xlist) {
 	else {
 		temp = abs_dev0/mad;
 	}
-	if(temp > __threshold__) {
+	if(temp > __info_threshold__) {
+#		print("x0    :%(x0)");
+#		print("xlist :%(xlist)");
+#		print("median:%(median_xlist)");
+#		print("10%   :%(tenPercent_xlist)");
+#		print("90%   :%(nintyPercent_xlist)");
+#		print("MAD   :%(mad)");
+#		print("mean  :%(mean_xlist)");
+#		print("SD    :%(sd_xlist)");
                 return temp;
         }else{
                 return -1;
         }
 }
 
-def __alert(list, level) {
+def __alert(list, level, threshold) {
 	__level__   = level;
+	__desc_subtype__ = "Link lt64 包数偏离程度(每%(__range_time_unit__)) > " + fmt_int(threshold) + ".";
 	item_set(list,"@timestamp",time("T"));
 	alert(list);
+#	print("----------------------------------------------------------------------");
 }
 
 call_list([
 	{ "name": "__query_now",    "args": {} },
-	{ "name": "__query_last",   "args": {} },
+#	{ "name": "__query_last",   "args": {} },
 	{ "name": "__query_hisdata","args": {} }
 ]);
 
