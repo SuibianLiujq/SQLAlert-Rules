@@ -12,9 +12,9 @@
 # __threshold__:           报警阈值.
 # ########################################################################
 __range_time_unit__      = "5m";
-__range_check_last__     = "24h";
 __range_check_hisdata__  = 30;  
-__threshold__            = 10;
+__threshold__            = 13;
+__threshold_warning__    = 200;
 
 # ########################################################################
 # 规则描述
@@ -27,8 +27,6 @@ __threshold__            = 10;
 # ########################################################################
 __type__    = "HTTP";
 __subtype__ = "FLOW_POST_URL";
-
 __desc_type__    = "[HTTP] POST_URL 请求数监控";
-__desc_subtype__ = "POST URL 连接数偏离程度(每%(__range_time_unit__)) > " + fmt_int(__threshold__) + ".";
 
 
