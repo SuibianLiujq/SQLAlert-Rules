@@ -7,16 +7,19 @@
 # 时间范围 & 阈值
 #
 # __range_time_unit__:     查询时间单元;
-# __range_check_last__:    一级报警查询时间段；
 # __range_check_hisdata__: 查询过去天数；
 # __info_threshold__:      INFO 报警阈值.
 # __warning_threshold__:   WARNING 报警阈值
 # ########################################################################
 __range_time_unit__      = "5m";
-__range_check_last__     = "6h";
 __range_check_hisdata__  = 30;  
 __info_threshold__       = 13;
-__warning_threshold__    = 100;
+__warning_threshold__    = 200;
+
+__itap_node__ = [
+	"65"
+];
+
 # ########################################################################
 # 规则描述
 #
