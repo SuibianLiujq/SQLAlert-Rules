@@ -50,14 +50,20 @@ def __query_hisdata(res,args) {
 
 	x0 = res[0]["lt64"];
 	xlist = item_values(result,"lt64");
+	if len(xlist) == 0 {
+		return -1;
+	}
 	value = deviation_model(x0,xlist);
 	if value != -1 {
 		return __alert([{"lt64":x0,"value":value}],"INFO",__info_threshold__);
 	}
+	else {
+		reutrn -1;
+	}
 }
 
 def __query_hisdata_week(res,args) {
-        if len(res) == 0 {
+        if res == -1 {
                 return -1;
         }
         result = query("
@@ -75,6 +81,9 @@ def __query_hisdata_week(res,args) {
 
         x0 = res[0]["lt64"];
         xlist = item_values(result,"lt64");
+        if len(xlist) == 0 {
+        	return -1;
+        }
         value = deviation_model(x0,xlist);
         if value != -1 {
                 if value >= __warning_threshold__ {
@@ -84,6 +93,9 @@ def __query_hisdata_week(res,args) {
                         __alert([{"lt64":x0,"value":value}],"WARNING",__info_threshold__);
                 }
                 return 1;
+        }
+        else {
+        	return -1;
         }
 }
 
