@@ -63,7 +63,7 @@ def __query_hisdata(res,args) {
 }
 
 def __query_hisdata_week(res,args) {
-        if res == -1 {
+        if len(res) == 0 {
                 return -1;
         }
         result = query("
