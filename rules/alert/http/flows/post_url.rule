@@ -92,7 +92,7 @@ def __query_his_week(res,args) {
                         AND url IN $(urllist)
                 GROUP BY
                         url,
-                        date_histogram(1d) AS date
+                        date_histogram(7d) AS date
                 LIMIT
                         1000,50
         ";
