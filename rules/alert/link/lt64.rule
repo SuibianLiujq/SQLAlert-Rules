@@ -72,11 +72,11 @@ def __query_hisdata_week(res,args) {
                 FROM
                         'link-*'
                 WHERE
-                        last_weeks(5, %(__range_time_unit__))
+                        last_weeks(10, %(__range_time_unit__))
 			AND node IN $(__itap_node__)
                 GROUP BY
                         date_histogram(7d) AS date
-                LIMIT 10000
+                LIMIT 50
         ");
 
         x0 = res[0]["lt64"];
