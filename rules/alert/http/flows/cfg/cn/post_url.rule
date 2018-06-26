@@ -16,6 +16,7 @@ __range_check_hisdata__  = 30;
 __threshold__            = 13;
 __threshold_warning__    = 200;
 
+__url_whitelist__ = [];
 # ########################################################################
 # 规则描述
 #
@@ -29,4 +30,10 @@ __type__    = "HTTP";
 __subtype__ = "FLOW_POST_URL";
 __desc_type__    = "[HTTP] POST_URL 请求数监控";
 
+__fields_all__ = {
+        "@timestamp":   { "desc": "时间戳"   },
+        "url":          { "desc": "URL"      },
 
+        "flow":         { "desc": "连接数",         "fmt": "int" },
+        "value":        { "desc": "偏离量化值",     "fmt": "int" }
+};
