@@ -9,14 +9,18 @@
 # __range_time_unit__:     查询时间单元;
 # __range_check_last__:    一级报警查询时间段；
 # __range_check_hisdata__: 查询过去天数；
-# __threshold__:           报警阈值.
+# __threshold__:           info 报警阈值.
+# __threshold_warn__:      warn 报警阈值.
+# __ignore_threshold__：   忽略阈值，当 flow及历史值 少于该值，则不检查. 
+# __url_whitelist__:       url 白名单，对于表中 url 不进行检查.
 # ########################################################################
 __range_time_unit__      = "5m";
 __range_check_hisdata__  = 30;  
 __threshold__            = 13;
-__threshold_warning__    = 200;
+__threshold_warn__       = 200;
+__ignore_threshold__     = 300;
+__url_whitelist__        = [];
 
-__url_whitelist__ = [];
 # ########################################################################
 # 规则描述
 #
@@ -25,15 +29,27 @@ __url_whitelist__ = [];
 #
 # __desc_type__:    报警类型描述;
 # __desc_subtype__: 报警详细描述;
+#
 # ########################################################################
 __type__    = "HTTP";
 __subtype__ = "FLOW_POST_URL";
 __desc_type__    = "[HTTP] POST_URL 请求数监控";
 
+__info_alert__ = {
+	"level"        : "info",
+	"desc_subtype" : "POST URL 连接数异常程度量化值(每%(__range_time_unit__)) > " + fmt_int(__threshold__) + "."
+};
+__warn_alert__ = {
+	"level"        : "warn",
+	"desc_subtype" : "POST URL 连接数异常程度量化值(每%(__range_time_unit__)) > " + fmt_int(__threshold_warn__) + "."
+};
+
+
+
 __fields_all__ = {
         "@timestamp":   { "desc": "时间戳"   },
         "url":          { "desc": "URL"      },
 
-        "flow":         { "desc": "连接数",         "fmt": "int" },
-        "value":        { "desc": "偏离量化值",     "fmt": "int" }
+        "flow":         { "desc": "连接数",             "fmt": "int" },
+        "value":        { "desc": "偏离程度量化值",     "fmt": "int" }
 };

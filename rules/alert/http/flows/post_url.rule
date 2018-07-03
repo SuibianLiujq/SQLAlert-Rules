@@ -6,7 +6,7 @@ import "alert/http/flows/cfg/cn/post_url.rule";
 
 # ########################################################################
 # 第 1 步:
-#	获取最近__range_time_unit__的 url 及其 flow。
+#	获取最近__range_time_unit__的不同 node 的 POST 的 url 及其 flow。
 #
 # ########################################################################
 def __query_now(listRes, args) {
@@ -17,20 +17,20 @@ def __query_now(listRes, args) {
 			'httpstat-*'
 		WHERE
 			last(%(__range_time_unit__)) 
-			AND query_string('method:POST')
+			AND method = 'POST'
 			AND not url IN $(__url_whitelist__)
 		GROUP BY
+			node,
 			url
 		LIMIT 500
-	";
-	
+	";	
 	result = query(sql);
 	return result;
 }
 
 # ########################################################################
 # 第 2 步:
-# 	根据第1步产生的 url list ，对比过去__range_check_hisdata__的每个url同一时间段的flow
+# 	根据第1步产生的 node-url list ，对比过去__range_check_hisdata__的每个 node-url 同一时间段的flow
 #
 # ########################################################################
 
@@ -39,162 +39,148 @@ def __query_his(res,args) {
 		return res;
 	}
 	
-	urllist = item_values(res,"url");
-	url_x0 = agg_items(res,"url");
-	
+	node_items = agg_items( res , "node" );
+	url_list = item_values( res , "url" );
+
+	# 构造 node-url 的字典，值为第一步返回的 flow
+	node_url_flow_dict = {};
+	for node,node_value in node_items {
+		node_url_items = agg_items( node_value , "url" );
+		node_url_flow_dict[node] = {};
+		for url,url_values in node_url_items {
+			node_url_flow_dict[node][url] = url_values[0]["flow"];
+		}
+	}
+
+	# 获取 last_days(%(__range_check_hisdata__),%(__range_time_unit__)) 每个 node-url 的 flow
 	sql = "
-                SELECT
-                        SUM(flow) AS flow
-                FROM
-                        'httpstat-*'
-                WHERE
-                        last_days(%(__range_check_hisdata__),%(__range_time_unit__))
-                        AND query_string('method:POST')
-                        AND url IN $(urllist)
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'httpstat-*'
+		WHERE
+			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
+			AND method = 'POST'
+			AND url IN $(url_list)
 		GROUP BY
+			node,
 			url,
 			date_histogram(1d) AS date
 		LIMIT
-			1000,50
+			20,1000,%(__range_check_hisdata__)
 	";
-	result = query(sql);
-	if len(result) == 0 {
+	result = query( sql );
+	if len( result ) == 0 {
 		return -1;
 	}
-	result = agg_values(result,"url","flow");
-	
-	info_alert_url = [];
-	for item in result {
-		url = item["url"];
-		xlist = item["flow"];
-		x0 = url_x0[item["url"]][0]["flow"];
-		
-		value = deviation_model(x0,xlist);
-		if value != -1 {
-			info_alert_url = append(info_alert_url,{"url":url,"flow":x0,"value":value});
+	# 以 node 为键值，对返回结果进行聚合
+	result = agg_items( result , "node" );
+
+	# info 和 warn 告警的 list
+	info_alert_list = [];
+	warn_alert_list = [];
+	# 对每个 node 及其对应的返回结果列表，进行迭代
+	for node,node_result in result {
+		# 对每个 node 的结果列表，对相同 url 的 flow 进行聚合
+		node_result = agg_values( node_result , "url" , "flow" );
+		for item in node_result {
+			url = item["url"];
+			# xlist 为 node-url 历史的 flow 列表
+			xlist = item["flow"];
+			# x0 为第一步返回的 node-flow 的值
+			x0 = node_url_flow_dict[node][url];
+			# 调用偏离程度量化模型，计算 x0 偏离 xlist 的程度量化值
+			value = deviation_model( x0,xlist );
+			# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
+			if value != -1 {
+				# 如果异常量化值比 warn 阈值大，则输出 warn 告警，否则输出 info 告警
+				if value < __threshold_warn__{
+					info_alert_list = append( info_alert_list , {"url":url,"flow":x0,"node":node,"value":value} );
+				}
+				else{
+					warn_alert_list = append( warn_alert_list , {"url":url,"flow":x0,"node":node,"value":value} );
+				}
+			}
 		}
 	}
-	return __alert(info_alert_url,"INFO",__threshold__);
+	__alert( info_alert_list , __info_alert__ );
+	__alert( warn_alert_list , __warn_alert__ );
 }
 
-def __query_his_week(res,args) {
-        if len(res) == 0 {
-                return res;
-        }
-
-        urllist = item_values(res,"url");
-        url_x0 = agg_items(res,"url");
-
-        sql = "
-                SELECT
-                        SUM(flow) AS flow
-                FROM
-                        'httpstat-*'
-                WHERE
-                        last_weeks(5,%(__range_time_unit__))
-                        AND query_string('method:POST')
-                        AND url IN $(urllist)
-                GROUP BY
-                        url,
-                        date_histogram(7d) AS date
-                LIMIT
-                        1000,50
-        ";
-        result = query(sql);
-	if len(result) == 0 {
-		return -1;
-	}
-        result = agg_values(result,"url","flow");
-
-        critical_alert_url = [];
-        warning_alert_url = [];
-        for item in result {
-                url = item["url"];
-                xlist = item["flow"];
-                x0 = url_x0[item["url"]][0]["flow"];
-
-                value = deviation_model(x0,xlist);
-                if value != -1 {
-                        if value > __threshold_warning__ {
-                                critical_alert_url = append(critical_alert_url,{"url":url,"flow":x0,"value":value});
-                        }
-                        else{
-                                warning_alert_url = append(warning_alert_url,{"url":url,"flow":x0,"value":value});
-                        }
-                }
-	}
-        __alert(critical_alert_url,"CRITICAL",__threshold_warning__);
-        __alert(warning_alert_url,"WARNING",__threshold__);
-}
-
-# 偏差程度检查模型
-def deviation_model(x0,xlist) {
+# ##############################################################################
+# 
+# 偏离程度量化模型
+#
+# ##############################################################################
+def deviation_model( x0 , xlist ) {
+	# 如果 len(xlist) 小于等于 1 ，无法衡量偏离程度
 	if len(xlist) <= 1 {
 		return -1;
 	}
-	# 假设 x0 在 xlist 的 10% 到 90% 之间，则认为 x0 正常返回-1。
-	nintyPercent_xlist = percentile(xlist,90);
-	tenPercent_xlist   = percentile(xlist,10);
-	if x0< nintyPercent_xlist {
-		if x0> tenPercent_xlist {
+	# len(xlist) == 2 时，MAD 恒等于 0 ，无法使用模型计算
+	# 因此直接将 max(xlist) 与 x0 比较，若 x0 更大且大于 __ignore_threshold__ 则给出 info 告警。
+	else if len(xlist) == 2 {
+		if  x0 <= max(xlist){
 			return -1;
 		}
-		else if nintyPercent_xlist<300 {
+		else if x0 <= __ignore_threshold__ {
+			return -1;
+		}
+		else {
+			return __threshold__;
+		}
+	}
+
+	# 假设 x0 在 xlist 的 10% 到 90% 之间，则认为 x0 正常返回-1。
+	# 当 x0 及 xlist 超过 90% 的值小于 __ignore_threshold__ 时，则认为 flow 太小没有检测价值而忽略
+	nintyPercent_xlist = percentile( xlist , 90 );
+	tenPercent_xlist   = percentile( xlist , 10 );
+	if x0 <= nintyPercent_xlist {
+		if x0 >= tenPercent_xlist {
+			return -1;
+		}
+		else if nintyPercent_xlist <= __ignore_threshold__ {
 			return -1;
 		}
 	}
-	else if ((x0 >= nintyPercent_xlist) && (x0 <300)) {
+	else if (( x0 >= nintyPercent_xlist ) && ( x0 <= __ignore_threshold__ )) {
 		return -1;
 	}
+	
+	# 求 xlist 的中值
 	median_xlist = median(xlist);
-	# 当 median 为0时没有检测意义，返回 -1。
-#	if median_xlist == 0 {
-#		return -1;
-#	}
-	# 求 xlist 与 median 的差的绝对值
+	
+	# 求 xlist 每个数与 median 的差的绝对值，得出绝对差列表 abs_deviation_list
 	abs_deviation_list = [];
 	for(i=0;i<len(xlist);i++){
 		abs_deviation = xlist[i]<median_xlist ? median_xlist-xlist[i] : xlist[i]-median_xlist;
 		abs_deviation_list = append(abs_deviation_list,abs_deviation);
 	}
-	# MAD 为绝对差的中值
+	# MAD 为绝对差列表的中值
 	mad = median(abs_deviation_list);
-	# 求 x0 与 median 的绝对差
+
+	# 求 x0 与 90%xlist/10%xlist的绝对差。
+	# 使用百分位数以提高数据适应性，以30天为例，xlist 出现 4 次峰值，则 x0 与前4次峰值相当时，则不会再告警。可以适应以周为周期的行为。
 	abs_dev0 = x0<median_xlist ? tenPercent_xlist-x0 : x0-nintyPercent_xlist;
-	# MAD 越接近 0 说明数据越平稳，一旦出现波动，使用z分数评估偏离状况
-	if (mad == 0) {
-		if median_xlist <300 {
-			return -1;
-		}
-		if(abs_dev0 != 0){
-			mean_xlist = avg(xlist);
-			sd_xlist = stdev(xlist);
-			abs_dev0 = x0<mean_xlist ? mean_xlist-x0 : x0-mean_xlist;
-			if sd_xlist == 0 {
-				temp = abs_dev0/mean_xlist;
-				if temp < 0.13 {
-					return -1;
-				}
-				else {
-					temp = temp+13;
-				}
-			}
-			else {
-				temp = abs_dev0/sd_xlist;
-				temp = temp + 10;
-			}
-		}
-		# 数据量不足或者 abs_dev0 为 0 时，返回 -1。
-		else {
-			return -1;
+
+
+	# MAD 越接近 0 说明数据越平稳。当 MAD 为 0 时，说明 xlist 有超过一半的数相等
+	if ( mad == 0 ) {
+		# 取 MAD 为绝对差列表得 90% 位数
+		mad =  percentile( abs_deviation_list , 90 );
+		# 此时，若 MAD 仍为 0 ，则说明 xlist 超过 90% 的数相等
+		# p.s.基本只有样本数量少才会出现此种状况，比如说 len(xlist) == 2 。
+		if mad == 0 {
+			mad = 1;
 		}
 	}
-	else{
-		temp = abs_dev0/mad;
-	}
-	
-	if(temp > __threshold__) {
-		return temp;
+
+	# x0 偏离 xlist 的量化值 value 为 x0 与 xlist 的偏差 abs_dev0 与 MAD 的比值
+	value = abs_dev0/mad;
+	# 当 x0 偏离 xlist 的量化值 value 大于 __threshold__ 时，返回 value ；否则返回 -1
+	# p.s.假设 xlist 的为柯西分布，则 __threshold__ 大于 13 时是小概率事件。
+	if( value > __threshold__ ) {
+		return value;
 	}else{
 		return -1;
 	}
@@ -206,11 +192,12 @@ def deviation_model(x0,xlist) {
 # 在该函数内需指定:
 # __level__: 报警等级.
 # ########################################################################
-def __alert(list, level,threshold) {
+def __alert( list , args ) {	
+	item_set( list , "@timestamp" , time("T") );
+
+	__level__        = args["level"];
+	__desc_subtype__ = args["desc_subtype"];
 	
-	__level__   = level;
-	__desc_subtype__ = "POST URL 连接数偏离程度(每%(__range_time_unit__)) > " + fmt_int(threshold) + ".";
-	item_set(list,"@timestamp",time("T"));
 	alert(list);
 #	print(list);
 }
@@ -233,7 +220,6 @@ def __alert(list, level,threshold) {
 # ########################################################################
 call_list([
 	{ "name": "__query_now",     "args": {} },
-	{ "name": "__query_his",     "args": {} },
-	{ "name": "__query_his_week","args": {} }
+	{ "name": "__query_his",     "args": {} }
 ]);
 
