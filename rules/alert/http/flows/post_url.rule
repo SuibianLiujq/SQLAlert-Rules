@@ -18,6 +18,7 @@ def __query_now( listRes , args ) {
 		WHERE
 			last(%(__range_time_unit__)) 
 			AND method = 'POST'
+			AND not url IN $(__url_ignore_list__)
 			AND not (node = %(__url_wl_node__) AND not url IN $(__url_whitelist__))
 		GROUP BY
 			node,
@@ -92,11 +93,11 @@ def __query_his( res , args ) {
 			value = deviation_model( x0,xlist );
 			# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
 			if value != -1 {
-				alert_list = append( alert_list , { "url":url , "node":node , "xlist":xlist } );
+				alert_list = append( alert_list , { "url":url , "node":node , "value":value , "flow":x0 } );
 			}
 		}
 	}
-	return alert_list;
+	return __alert( alert_list , __info_alert__ );
 }
 
 # ##############################################################################
@@ -111,7 +112,6 @@ def __query_http( res , args ) {
 	# 以 node 为键值，聚合
 	node_items = agg_items( res , "node" );
 
-	info_alert_list = [];
 	warn_alert_list = [];
 	for node,node_value in node_items {
 		url_items = agg_items( node_value , "url" );
@@ -127,26 +127,17 @@ def __query_http( res , args ) {
 					AND method = 'POST'
 					AND node = '%(node)'
 					AND url like '%(url)*'
+					AND not sip IN $(__sip_ignore_list__)
 			";
 			result = query( sql );
-
-			x0 = result[0]["flow"];
-			xlist = url_value[0]["xlist"];
-			
-			value = deviation_model( x0,xlist );
-
-			if value != -1 {
-				if value < __threshold_warn__ {
-					info_alert_list = append( info_alert_list , { "flow":x0 , "value":value , "node":node , "url":url } );
-				}
-				else {
-					warn_alert_list = append( warn_alert_list , { "flow":x0 , "value":value , "node":node , "url":url } );
-				}
+			if result[0]["flow"] == 0 {
+				continue;
 			}
+			
+			warn_alert_list = append( warn_alert_list , url_value[0] );
 		}
 	}
-	__alert( info_alert_list , __info_alert__ );
-	__alert( warn_alert_list , __warn_alert__ );
+	return	__alert( warn_alert_list , __warn_alert__ );
 }
 
 
@@ -242,7 +233,7 @@ def __alert( list , args ) {
 	__level__        = args["level"];
 	__desc_subtype__ = args["desc_subtype"];
 	
-	alert(list);
+	return alert(list);
 #	print(list);
 }
 
