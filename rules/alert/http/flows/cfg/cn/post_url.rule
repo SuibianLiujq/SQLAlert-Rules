@@ -12,7 +12,8 @@
 # __threshold__:           info 报警阈值.
 # __threshold_warn__:      warn 报警阈值.
 # __ignore_threshold__：   忽略阈值，当 flow及历史值 少于该值，则不检查. 
-# __url_whitelist__:       url 白名单，对于表中 url 不进行检查.
+# __url_whitelist__:       url 白名单，对于指定 node 的只检查列表内的 url.
+# __
 # ########################################################################
 __range_time_unit__      = "5m";
 __range_check_hisdata__  = 30;  
@@ -20,6 +21,11 @@ __threshold__            = 13;
 __threshold_warn__       = 200;
 __ignore_threshold__     = 300;
 __url_whitelist__        = [];
+__url_wl_node__          = "0";
+__sip_whitelist__        = [];
+__sip_ignore_list__      = [];
+__url_ignore_list__      = [];
+
 
 # ########################################################################
 # 规则描述
@@ -41,7 +47,7 @@ __info_alert__ = {
 };
 __warn_alert__ = {
 	"level"        : "warn",
-	"desc_subtype" : "POST URL 连接数异常程度量化值(每%(__range_time_unit__)) > " + fmt_int(__threshold_warn__) + "."
+	"desc_subtype" : "POST URL 连接数异常程度量化值(每%(__range_time_unit__)) > " + fmt_int(__threshold__) + "."
 };
 
 

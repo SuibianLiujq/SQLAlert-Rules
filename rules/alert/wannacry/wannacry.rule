@@ -30,7 +30,7 @@ def __query_port(listRes,args){
 		GROUP BY
 			sip,
 			dport
-		limit 1000,100
+		limit 50,5
 	";
 	result = query(sql_tcp_port);
 
@@ -51,9 +51,9 @@ def __query_scan_port(listRes,args){
 	
 	# 获取sip列表，使用该列表进行过滤。
 	siplist = item_values(listRes,"sip");
-	sql_tcp_scan_port = "
+	sql_tcp_scan = "
 		SELECT
-			COUNT(UNIQUE dip)    AS count_dip
+			SUM(flow)    AS flow
 		FROM
 			'tcp-*'
 		WHERE
@@ -62,16 +62,27 @@ def __query_scan_port(listRes,args){
 			AND NOT (dip IN $(whitelist))
 		GROUP BY
 			sip,
-			dport
-		ORDER BY
-			count_dip DESC
-		limit 1000,100
+			dport,
+			dip
+		limit 
+			50,5,%(__threshold__)
 	";
 	# 查询 ES ,并根据count_dip>=__threshold__进行过滤输出。
-	result = query(sql_tcp_scan_port,"count_dip >= __threshold__");
+	result = query(sql_tcp_scan);
+
+	alert_list = [];
+	sip_dict = agg_items(result,"sip");
+	for sip,sip_value in sip_dict {
+		dport_dict = agg_items(sip_value,"dport");
+		for dport,dport_value in dport_dict {
+			if len(dport_value) == __threshold__ {
+				alert_list = append(alert_list,{"sip":sip,"dport":dport});
+			}
+		}
+	}
 	
 	desc_subtype = "尝试扫描其他IP的敏感端口 目标IP数量>=" + fmt_int(__threshold__) + ".";
-	return __alert(result,"WARNING",desc_subtype);
+	return __alert(alert_list,"WARNING",desc_subtype);
 }
 
 ######

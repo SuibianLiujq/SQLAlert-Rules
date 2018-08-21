@@ -9,7 +9,7 @@ import "alert/http/flows/cfg/cn/post_url.rule";
 #	获取最近__range_time_unit__的不同 node 的 POST 的 url 及其 flow。
 #
 # ########################################################################
-def __query_now(listRes, args) {
+def __query_now( listRes , args ) {
 	sql = "
 		SELECT
 			SUM(flow) AS flow
@@ -18,7 +18,8 @@ def __query_now(listRes, args) {
 		WHERE
 			last(%(__range_time_unit__)) 
 			AND method = 'POST'
-			AND not url IN $(__url_whitelist__)
+			AND not url IN $(__url_ignore_list__)
+			AND not (node = %(__url_wl_node__) AND not url IN $(__url_whitelist__))
 		GROUP BY
 			node,
 			url
@@ -34,7 +35,7 @@ def __query_now(listRes, args) {
 #
 # ########################################################################
 
-def __query_his(res,args) {
+def __query_his( res , args ) {
 	if len(res) == 0 {
 		return res;
 	}
@@ -76,9 +77,8 @@ def __query_his(res,args) {
 	# 以 node 为键值，对返回结果进行聚合
 	result = agg_items( result , "node" );
 
-	# info 和 warn 告警的 list
-	info_alert_list = [];
-	warn_alert_list = [];
+	# 告警 list
+	alert_list = [];
 	# 对每个 node 及其对应的返回结果列表，进行迭代
 	for node,node_result in result {
 		# 对每个 node 的结果列表，对相同 url 的 flow 进行聚合
@@ -93,19 +93,54 @@ def __query_his(res,args) {
 			value = deviation_model( x0,xlist );
 			# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
 			if value != -1 {
-				# 如果异常量化值比 warn 阈值大，则输出 warn 告警，否则输出 info 告警
-				if value < __threshold_warn__{
-					info_alert_list = append( info_alert_list , {"url":url,"flow":x0,"node":node,"value":value} );
-				}
-				else{
-					warn_alert_list = append( warn_alert_list , {"url":url,"flow":x0,"node":node,"value":value} );
-				}
+				alert_list = append( alert_list , { "url":url , "node":node , "value":value , "flow":x0 } );
 			}
 		}
 	}
-	__alert( info_alert_list , __info_alert__ );
-	__alert( warn_alert_list , __warn_alert__ );
+	return __alert( alert_list , __info_alert__ );
 }
+
+# ##############################################################################
+# 
+# 第3步：根据第二步返回的结果，从 http 获取每个 node-url 去除 sip 白名单后的 flow 进行检查
+# 
+# ##############################################################################
+def __query_http( res , args ) {
+	if len(res) == 0 {
+		return res;
+	}
+	# 以 node 为键值，聚合
+	node_items = agg_items( res , "node" );
+
+	warn_alert_list = [];
+	for node,node_value in node_items {
+		url_items = agg_items( node_value , "url" );
+
+		for url,url_value in url_items {	
+			sql = "
+				SELECT 
+					SUM(flow) AS flow
+				FROM
+					'http-*'
+				WHERE
+					last(%(__range_time_unit__))
+					AND method = 'POST'
+					AND node = '%(node)'
+					AND url like '%(url)*'
+					AND not sip IN $(__sip_ignore_list__)
+			";
+			result = query( sql );
+			if result[0]["flow"] == 0 {
+				continue;
+			}
+			
+			warn_alert_list = append( warn_alert_list , url_value[0] );
+		}
+	}
+	return	__alert( warn_alert_list , __warn_alert__ );
+}
+
+
 
 # ##############################################################################
 # 
@@ -198,7 +233,7 @@ def __alert( list , args ) {
 	__level__        = args["level"];
 	__desc_subtype__ = args["desc_subtype"];
 	
-	alert(list);
+	return alert(list);
 #	print(list);
 }
 
@@ -220,6 +255,7 @@ def __alert( list , args ) {
 # ########################################################################
 call_list([
 	{ "name": "__query_now",     "args": {} },
-	{ "name": "__query_his",     "args": {} }
+	{ "name": "__query_his",     "args": {} },
+	{ "name": "__query_http",    "args": {} }
 ]);
 
