@@ -16,6 +16,12 @@ domainlist = [
 	'www.iuqssfsodp9ifjaposdfjhgosurijfaewrwergwea.com',
 	'www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergweb.com'
 ];
+iprangelist =[
+	[10.0.0.0,10.255.255.255],
+	[172.16.0.0,172.31.255.255],
+	[192.168.0.0,192.168.255.255]
+];
+timeout_state_num_list = [1,10];
 
 ###
 #__range_query_port__     查询 tcp 的时间范围

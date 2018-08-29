@@ -27,6 +27,8 @@ def __query_port(listRes,args){
 			last(%(__range_query_port__))
 			AND (dport IN $(portlist))
 			AND NOT (dip IN $(whitelist))
+			AND ip_ranges(sip,$(iprangelist))
+			AND (timeout_state_num IN $(timeout_state_num_list))
 		GROUP BY
 			sip,
 			dport
@@ -58,6 +60,7 @@ def __query_scan_port(listRes,args){
 			'tcp-*'
 		WHERE
 			last(%(__range_query_port__))
+			AND (sip IN $(siplist))
 			AND (dport IN $(portlist))
 			AND NOT (dip IN $(whitelist))
 		GROUP BY
