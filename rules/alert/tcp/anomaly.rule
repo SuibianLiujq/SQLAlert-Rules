@@ -1,0 +1,248 @@
+# ########################################################################
+# 本文件定义的规则
+#
+# ########################################################################
+import "alert/tcp/flows/cfg/cn/anomaly.rule";
+
+# ########################################################################
+# 第 1 步:
+#	
+#
+# ########################################################################
+def __query_now( listRes , args ) {
+	sql = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'tcp-agg-*'
+		WHERE
+			last(%(__range_time_unit__))
+			AND ip_ranges( sip, $(__sip_range_list__))
+			AND (
+				flow > unknown_conn 
+				OR timeout_state IN [1,10] 
+				OR (
+					timeout_state IN [2,9]
+					AND (inpacket - retransmit_in) > 1
+					AND (outpacket - retransmit_out) > 1
+				)
+			)
+	";	
+	result = query(sql);
+	return result;
+}
+
+# ########################################################################
+# 第 2 步:
+# 	
+#
+# ########################################################################
+
+def __query_his( res , args ) {
+	if len(res) == 0 {
+		return res;
+	}
+	x0 = res[0]["flow"];
+
+	# 获取 last_days(%(__range_check_hisdata__),%(__range_time_unit__)) 
+	sql = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'tcp-agg-*'
+		WHERE
+			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
+			AND ip_ranges( sip, $(__sip_range_list__))
+			AND (
+				flow > unknown_conn 
+				OR timeout_state IN [1,10] 
+				OR (
+					timeout_state IN [2,9]
+					AND (inpacket - retransmit_in) > 1
+					AND (outpacket - retransmit_out) > 1
+				)
+			)
+		GROUP BY
+			date_histogram(1d) AS date
+		LIMIT
+			%(__range_check_hisdata__)
+	";
+	result = query( sql );
+	if len( result ) == 0 {
+		return -1;
+	}
+
+	# 告警 list
+	alert_list = [];
+
+	# xlist 为 node-url 历史的 flow 列表
+	xlist = item_values(result, "flow");
+
+	# 调用偏离程度量化模型，计算 x0 偏离 xlist 的程度量化值
+	value = deviation_model( x0, xlist);
+	# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
+	if value < -1 {
+		__alert([{ "flow": x0, "value": 0-value}] , { "level": "info", "desc_subtype": "[flow_anomaly] TCP 连接数过低"});
+	}
+	if value >0 {
+		__query_top_sip( x0, value);
+	}
+}
+
+def __query_top_sip( x0, value) {
+	sql = "
+		SELECT
+			SUM(flow) AS flow
+		FROM
+			'tcp-agg-*'
+		WHERE
+			last(%(__range_time_unit__))
+			AND ip_ranges( sip, $(__sip_range_list__))
+			AND (
+				flow > unknown_conn 
+				OR timeout_state IN [1,10] 
+				OR (
+					timeout_state IN [2,9]
+					AND (inpacket - retransmit_in) > 1
+					AND (outpacket - retransmit_out) > 1
+				)
+			)
+		GROUP BY
+			sip
+		LIMIT
+			%(__top__)
+	";
+
+	res = query(sql);
+	sip_list = item_values( res, "sip");
+	__alert( [ { "flow": x0, "value": value, "sip": sip_list}], { "level": "info", "desc_subtype": "[flow_anomaly] TCP 连接数过高；Top %(__top__) sip"});
+}
+
+
+# ##############################################################################
+# 
+# 偏离程度量化模型
+#
+# ##############################################################################
+def deviation_model( x0 , xlist ) {
+	# 如果 len(xlist) 小于等于 1 ，无法衡量偏离程度
+	if len(xlist) <= 1 {
+		return -1;
+	}
+	# len(xlist) == 2 时，MAD 恒等于 0 ，无法使用模型计算
+	# 因此直接将 max(xlist) 与 x0 比较，若 x0 更大且大于 __ignore_threshold__ 则给出 info 告警。
+	else if len(xlist) == 2 {
+		if  x0 <= max(xlist){
+			return -1;
+		}
+		else if x0 <= __ignore_threshold__ {
+			return -1;
+		}
+		else {
+			print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+			print(x0);
+			print(xlist);
+			return __threshold__;
+		}
+	}
+
+	# 假设 x0 在 xlist 的 10% 到 90% 之间，则认为 x0 正常返回-1。
+	# 当 x0 及 xlist 超过 90% 的值小于 __ignore_threshold__ 时，则认为 flow 太小没有检测价值而忽略
+	nintyPercent_xlist = percentile( xlist , 90 );
+	tenPercent_xlist   = percentile( xlist , 10 );
+	if x0 <= nintyPercent_xlist {
+		if x0 >= tenPercent_xlist {
+			return -1;
+		}
+		else if nintyPercent_xlist <= __ignore_threshold__ {
+			return -1;
+		}
+	}
+	else if (( x0 >= nintyPercent_xlist ) && ( x0 <= __ignore_threshold__ )) {
+		return -1;
+	}
+	
+	# 求 xlist 的中值
+	median_xlist = median(xlist);
+	
+	# 求 xlist 每个数与 median 的差的绝对值，得出绝对差列表 abs_deviation_list
+	abs_deviation_list = [];
+	for(i=0;i<len(xlist);i++){
+		abs_deviation = xlist[i]<median_xlist ? median_xlist-xlist[i] : xlist[i]-median_xlist;
+		abs_deviation_list = append(abs_deviation_list,abs_deviation);
+	}
+	# MAD 为绝对差列表的中值
+	mad = median(abs_deviation_list);
+
+	# 求 x0 与 90%xlist/10%xlist的绝对差。
+	# 使用百分位数以提高数据适应性，以30天为例，xlist 出现 4 次峰值，则 x0 与前4次峰值相当时，则不会再告警。可以适应以周为周期的行为。
+	abs_dev0 = x0<median_xlist ? tenPercent_xlist-x0 : x0-nintyPercent_xlist;
+
+
+	# MAD 越接近 0 说明数据越平稳。当 MAD 为 0 时，说明 xlist 有超过一半的数相等
+	if ( mad == 0 ) {
+		# 取 MAD 为绝对差列表得 90% 位数
+		mad =  percentile( abs_deviation_list , 90 );
+		# 此时，若 MAD 仍为 0 ，则说明 xlist 超过 90% 的数相等
+		# p.s.基本只有样本数量少才会出现此种状况，比如说 len(xlist) == 2 。
+		if mad == 0 {
+			mad = 1;
+		}
+	}
+
+	# x0 偏离 xlist 的量化值 value 为 x0 与 xlist 的偏差 abs_dev0 与 MAD 的比值
+	value = abs_dev0/mad;
+	# 当 x0 偏离 xlist 的量化值 value 大于 __threshold__ 时，返回 value ；否则返回 -1
+	# p.s.假设 xlist 的为柯西分布，则 __threshold__ 大于 13 时是小概率事件。
+	if( value > __threshold__ ) {
+		print("================================================================");
+		print(x0);
+		print(xlist);
+		print("value:%(value)");
+		print("mad:%(mad)");
+		if (x0 < median_xlist) {
+			return 0-value;
+		}
+		return value;
+	}else{
+		return -1;
+	}
+}
+
+# ########################################################################
+# 报警输出.
+#
+# 在该函数内需指定:
+# __level__: 报警等级.
+# ########################################################################
+def __alert( list , args ) {	
+	item_set( list , "@timestamp" , time("T") );
+
+	__level__        = args["level"];
+	__desc_subtype__ = args["desc_subtype"];
+	
+	return alert(list);
+#	print(list);
+}
+
+
+# ########################################################################
+# 配置并调用函数链 (规则入口).
+#
+# 函数链配置包括:
+#	name: 函数名;
+#	args: 函数参数.
+#
+# 函数链中的函数原型为:
+#	def func(result, args);
+#
+# 参数说明;
+#	result: 上一个函数的返回值;
+#			函数链中的第一个函数接收到的该参数为 null.
+#	args:   函数链配置时指定的参数.
+# ########################################################################
+call_list([
+	{ "name": "__query_now",     "args": {} },
+	{ "name": "__query_his",     "args": {} }
+]);
+
