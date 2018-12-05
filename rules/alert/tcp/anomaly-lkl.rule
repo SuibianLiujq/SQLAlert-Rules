@@ -2,7 +2,7 @@
 # 本文件定义的规则
 #
 # ########################################################################
-import "alert/tcp/flows/cfg/cn/anomaly.rule";
+import "alert/tcp/flows/cfg/cn/anomaly-lkl.rule";
 
 # ########################################################################
 # 第 1 步:
@@ -17,24 +17,14 @@ def __query_now( listRes , args ) {
 			'tcp-agg-*'
 		WHERE
 			last(%(__range_time_unit__))
-			AND ip_ranges( sip, $(__sip_range_list__))
-			AND (
-				flow > unknown_conn 
-				OR timeout_state IN [1,9,10] 
-				OR (
-					timeout_state = 2
-					AND (inpacket - retransmit_in) > 0
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 11 
-					AND (inpacket - retransmit_in) > 1
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 12
-					AND (outpacket - retransmit_out) > 0
-					AND AND (outpacket - retransmit_out) > 1
-				)
-			)
+			AND node IN $(__node_list__)
+			AND dport = %(__dport__)
+			AND ip_ranges( dip, $(__ip_range_list__))
+			AND NOT ip_ranges( sip, $(__ip_range_list__))
+		GROUP BY
+			node,
+			dip
+		LIMIT 10,500
 	";	
 	result = query(sql);
 	return result;
@@ -50,7 +40,15 @@ def __query_his( res , args ) {
 	if len(res) == 0 {
 		return res;
 	}
-	x0 = res[0]["flow"];
+	
+	dip_list = item_values( res, "dip");
+
+	node_items = agg_items( res, "node");
+	node_dip_dict = {};
+	for node,node_value in node_items {
+		node_dip_items = agg_items( node_value, "dip");
+		node_dip_dict[node] = node_dip_items;
+	}
 
 	# 获取 last_days(%(__range_check_hisdata__),%(__range_time_unit__)) 
 	sql = "
@@ -60,86 +58,55 @@ def __query_his( res , args ) {
 			'tcp-agg-*'
 		WHERE
 			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
-			AND ip_ranges( sip, $(__sip_range_list__))
-			AND (
-				flow > unknown_conn 
-				OR timeout_state IN [1,9,10] 
-				OR (
-					timeout_state = 2
-					AND (inpacket - retransmit_in) > 0
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 11 
-					AND (inpacket - retransmit_in) > 1
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 12
-					AND (outpacket - retransmit_out) > 0
-					AND AND (outpacket - retransmit_out) > 1
-				)
-			)
+			AND node IN $(__node_list__)
+			AND dport = %(__dport__)
+			AND dip IN $(__dip_list__)
+			AND NOT ip_ranges( sip, $(__ip_range_list__))
 		GROUP BY
+			node,
+			dip,
 			date_histogram(1d) AS date
 		LIMIT
-			%(__range_check_hisdata__)
+			10, 500, %(__range_check_hisdata__)
 	";
 	result = query( sql );
 	if len( result ) == 0 {
 		return -1;
 	}
 
+	result = agg_items( result , "node" );
+
 	# 告警 list
 	alert_list = [];
 
-	# xlist 为 node-url 历史的 flow 列表
-	xlist = item_values(result, "flow");
+	# 对每个 node 及其对应的返回结果列表，进行迭代
+	for node,node_result in result {
+		# 对每个 node 的结果列表，对相同 dip 的 flow 进行聚合
+		node_result = agg_values( node_result, "dip", "flow");
+		for item in node_result {
+			dip = item["dip"];
 
-	# 调用偏离程度量化模型，计算 x0 偏离 xlist 的程度量化值
-	value = deviation_model( x0, xlist);
-	# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
-	if value < -1 {
-		__alert([{ "flow": x0, "value": 0-value}], __info_low_cfg__);
+			# x0 为上一步返回的 node-dip 的 flow。如果该值不存在，则continue。
+			if len(node_dip_dict[node][dip]) == 0 {
+				continue;
+			} else {
+				x0 = node_dip_dict[node][dip][0]["flow"];
+			}
+
+			# xlist 为 node-dip 历史的 flow 列表
+			xlist = item["flow"];
+
+			# 调用偏离程度量化模型，计算 x0 偏离 xlist 的程度量化值
+			value = deviation_model( x0, xlist);
+			# value 不为 -1 则说明，认为 x0 偏离 xlist 的程度为异常，此时 value 为异常程度量化值
+			if value < -1 {
+				__alert([{ "flow": x0, "value": 0-value, "dip": dip, "dport": dport, "node": node}], __info_low_cfg__);
+			}
+			if value > 0 {
+				__alert([{ "flow": x0, "value": value, "dip": dip,, "dport": dport, "node": node}], __info_high_cfg__);
+			}
+		}
 	}
-	if value >0 {
-		__query_top_sip( x0, value);
-	}
-}
-
-def __query_top_sip( x0, value) {
-	sql = "
-		SELECT
-			SUM(flow) AS flow
-		FROM
-			'tcp-agg-*'
-		WHERE
-			last(%(__range_time_unit__))
-			AND ip_ranges( sip, $(__sip_range_list__))
-			AND (
-				flow > unknown_conn 
-				OR timeout_state IN [1,9,10] 
-				OR (
-					timeout_state = 2
-					AND (inpacket - retransmit_in) > 0
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 11 
-					AND (inpacket - retransmit_in) > 1
-					AND (outpacket - retransmit_out) > 0
-				) OR (
-					timeout_state = 12
-					AND (outpacket - retransmit_out) > 0
-					AND AND (outpacket - retransmit_out) > 1
-				)
-			)
-		GROUP BY
-			sip
-		LIMIT
-			%(__top__)
-	";
-
-	res = query(sql);
-	sip_list = item_values( res, "sip");
-	__alert( [ { "flow": x0, "value": value, "sip": sip_list}],  __info_high_cfg__);
 }
 
 

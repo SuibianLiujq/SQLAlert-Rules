@@ -18,12 +18,16 @@ __range_check_hisdata__  = 30;
 __threshold__            = 13;
 __threshold_warn__       = 200;
 __ignore_threshold__     = 30;
-__top__                  = 10;
 
-__sip_range_list__ = [
-	[ "10.0.0.0", "10.255.255.255"],
-	[ "172.16.0.0", "172.31.255.255"],
-	[ "192.168.0.0", "192.168.255.255"]
+
+__node_list__ = [
+	"10.10.20.203"
+];
+
+__dport__ = 443;
+
+__ip_range_list__ = [
+	[ "10.0.0.0", "10.255.255.255"]
 ];
 
 
@@ -39,7 +43,7 @@ __sip_range_list__ = [
 # ########################################################################
 __type__    = "tcp";
 __subtype__ = "flow_anomaly";
-__desc_type__    = "[tcp] flow_anomaly 请求数监控";
+__desc_type__    = "[tcp] flow_anomaly TCP连接数监控";
 
 __info_high_cfg__ = {
 	"level"        : "info",
