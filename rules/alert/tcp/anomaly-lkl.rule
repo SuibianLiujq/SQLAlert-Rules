@@ -2,7 +2,7 @@
 # 本文件定义的规则
 #
 # ########################################################################
-import "alert/tcp/flows/cfg/cn/anomaly-lkl.rule";
+import "anomaly-lkl/cfg/cn/anomaly-lkl.rule";
 
 # ########################################################################
 # 第 1 步:
@@ -14,7 +14,7 @@ def __query_now( listRes , args ) {
 		SELECT
 			SUM(flow) AS flow
 		FROM
-			'tcp-agg-*'
+			'tcp-*'
 		WHERE
 			last(%(__range_time_unit__))
 			AND node IN $(__node_list__)
@@ -55,12 +55,12 @@ def __query_his( res , args ) {
 		SELECT
 			SUM(flow) AS flow
 		FROM
-			'tcp-agg-*'
+			'tcp-*'
 		WHERE
 			last_days(%(__range_check_hisdata__),%(__range_time_unit__))
 			AND node IN $(__node_list__)
 			AND dport = %(__dport__)
-			AND dip IN $(__dip_list__)
+			AND dip IN $(dip_list)
 			AND NOT ip_ranges( sip, $(__ip_range_list__))
 		GROUP BY
 			node,
@@ -103,7 +103,7 @@ def __query_his( res , args ) {
 				__alert([{ "flow": x0, "value": 0-value, "dip": dip, "dport": dport, "node": node}], __info_low_cfg__);
 			}
 			if value > 0 {
-				__alert([{ "flow": x0, "value": value, "dip": dip,, "dport": dport, "node": node}], __info_high_cfg__);
+				__alert([{ "flow": x0, "value": value, "dip": dip, "dport": dport, "node": node}], __info_high_cfg__);
 			}
 		}
 	}
@@ -212,8 +212,8 @@ def __alert( list , args ) {
 	__level__        = args["level"];
 	__desc_subtype__ = args["desc_subtype"];
 	
-	return alert(list);
-#	print(list);
+	print(list);
+#	return alert(list);
 }
 
 
